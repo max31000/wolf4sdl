@@ -223,6 +223,17 @@ SDL_ShutPC(void)
         pcSound = 0;
 }
 
+#ifdef __EMSCRIPTEN__
+static void SDL_PCMixCallback(void *udata, Uint8 *stream, int len);
+
+// Post-mix of the web build: PC speaker as usual, then the host's master volume
+static void SDL_WebPostMix(void *udata, Uint8 *stream, int len)
+{
+    SDL_PCMixCallback(udata, stream, len);
+    BW_ApplyMasterVolume(stream, len);
+}
+#endif
+
 // Adapted from Chocolate Doom (chocolate-doom/pcsound/pcsound_sdl.c)
 #define SQUARE_WAVE_AMP 0x2000
 
@@ -930,7 +941,11 @@ SD_Startup(void)
     alTimeCount = 0;
 
     // Add PC speaker sound mixer
+#ifdef __EMSCRIPTEN__
+    Mix_SetPostMix(SDL_WebPostMix, NULL);
+#else
     Mix_SetPostMix(SDL_PCMixCallback, NULL);
+#endif
 
     SD_SetSoundMode(sdm_Off);
     SD_SetMusicMode(smm_Off);

@@ -112,7 +112,11 @@ uint32_t ReadLong (void *ptr)
 
 void Error (const char *string)
 {
+#ifdef __EMSCRIPTEN__
+    BW_Error (string);      // no alert() box in the browser
+#else
     SDL_ShowSimpleMessageBox (SDL_MESSAGEBOX_ERROR,"Wolf4SDL",string,NULL);
+#endif
 }
 
 void Help (const char *string)

@@ -87,7 +87,9 @@ void VW_Startup (void)
             flags |= SDL_WINDOW_INPUT_GRABBED;
     }
 
-    flags |= SDL_WINDOW_RESIZABLE;
+#ifndef __EMSCRIPTEN__
+    flags |= SDL_WINDOW_RESIZABLE;  // web: the host page sizes the canvas with CSS
+#endif
     x = SDL_WINDOWPOS_CENTERED;
     y = SDL_WINDOWPOS_CENTERED;
     w = screen.width;

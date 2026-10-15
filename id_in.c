@@ -315,6 +315,21 @@ static void IN_HandleEvent (SDL_Event *event)
 
             if (LastScan == sc_Pause)
                 Paused = true;
+#ifdef __EMSCRIPTEN__
+            //
+            // SDL text input is off in the web build (keyboard focus stays on the canvas);
+            // derive the typed character from the key, like LastASCII in the DOS original
+            //
+            {
+                SDL_Keycode sym = event->key.keysym.sym;
+                boolean shift = (event->key.keysym.mod & KMOD_SHIFT) != 0;
+
+                if (sym >= SDLK_a && sym <= SDLK_z)
+                    snprintf (textinput,sizeof(textinput),"%c",(char)(shift ? sym - 32 : sym));
+                else if (sym >= SDLK_SPACE && sym < SDLK_DELETE && !shift)
+                    snprintf (textinput,sizeof(textinput),"%c",(char)sym);
+            }
+#endif
             break;
 
         case SDL_KEYUP:
@@ -343,6 +358,9 @@ void IN_ProcessEvents (void)
 {
     SDL_Event event;
 
+#ifdef __EMSCRIPTEN__
+    BW_YieldIfBusy ();      // polling loops without a wait yield to the browser
+#endif
     while (SDL_PollEvent(&event))
         IN_HandleEvent (&event);
 }
@@ -398,8 +416,8 @@ void IN_Startup(void)
         IN_SetWindowGrab (screen.window);
 
     // I didn't find a way to ask libSDL whether a mouse is present, yet...
-#if defined(GP2X)
-    MousePresent = false;
+#if defined(GP2X) || defined(__EMSCRIPTEN__)
+    MousePresent = false;   // web: keyboard only (no pointer lock)
 #elif defined(_arch_dreamcast)
     MousePresent = DC_MousePresent();
 #else

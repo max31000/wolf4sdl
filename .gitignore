@@ -79,3 +79,7 @@ Makefile.win
 ##############
 /.vscode
 /build
+
+# Web build
+build-web*/
+__pycache__/

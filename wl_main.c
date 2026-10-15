@@ -377,6 +377,13 @@ void NewGame (int difficulty,int episode)
     gamestate.episode=episode;
 
     startgame = true;
+#ifdef __EMSCRIPTEN__
+    {
+        char json[64];
+        snprintf (json,sizeof(json),"{\"difficulty\":%d,\"episode\":%d}",difficulty,episode);
+        BW_Emit ("newGame",json);
+    }
+#endif
 }
 
 //===========================================================================
@@ -1270,6 +1277,9 @@ static void InitGame()
     ReadConfig ();
 
     VW_Startup ();
+#ifdef __EMSCRIPTEN__
+    SDL_StopTextInput ();   // keys go to the game only (see IN_HandleEvent)
+#endif
 
     SignonScreen ();
 

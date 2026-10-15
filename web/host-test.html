@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Wolf3D host test</title>
+  <!--
+    Dev-only host page: does what the Bliss page does with a release build (createWolf3d +
+    game files written into /data from preRun). Not part of the release asset.
+
+    Query parameters:
+      build  URL of the directory with wolf3d.{js,wasm} (default ../build-web/bin/)
+      data   URL of the directory with the shareware *.WL1 files (default /bliss/assets/wolf3d/)
+      scale  CSS scale of the 320x240 (4:3) display (default 3)
+      args   extra command line arguments, space separated (e.g. "--goobers")
+  -->
+  <style>
+    html, body { margin: 0; background: #202020; color: #ddd; font: 12px system-ui, sans-serif; }
+    main { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 12px; }
+    canvas { display: block; outline: none; background: #000; image-rendering: pixelated; }
+    canvas:focus { box-shadow: 0 0 0 2px #4a8; }
+    #log { width: 960px; max-width: 95vw; height: 120px; overflow: auto; background: #111; padding: 4px;
+           font: 11px monospace; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+<main>
+  <div id="bar">
+    <button id="pause">Пауза</button>
+    <label>Громкость <input id="volume" type="range" min="0" max="100" value="100"></label>
+    <input id="probe" placeholder="DOM input (typing test)" size="24">
+    <span id="status">Загрузка…</span>
+  </div>
+  <canvas id="game"></canvas>
+  <div id="log"></div>
+</main>
+<script type="module">
+  const params = new URLSearchParams(location.search);
+  const build = params.get('build') || '../build-web/bin/';
+  const dataUrl = params.get('data') || '/bliss/assets/wolf3d/';
+  const scale = parseFloat(params.get('scale') || '3');
+  const args = (params.get('args') || '').split(' ').filter(Boolean);
+
+  // Wolfenstein 3D shareware v1.4 (Bliss imports the same files via Vite ?url).
+  const FILES = ['AUDIOHED', 'AUDIOT', 'GAMEMAPS', 'MAPHEAD', 'VGADICT', 'VGAGRAPH', 'VGAHEAD', 'VSWAP']
+    .map((n) => `${n}.WL1`);
+
+  const logEl = document.getElementById('log');
+  const statusEl = document.getElementById('status');
+  const canvas = document.getElementById('game');
+  window.blissEvents = [];
+  const log = (s) => { logEl.textContent += s + '\n'; logEl.scrollTop = logEl.scrollHeight; };
+
+  // The game renders 320x200; the original monitor showed it at 4:3.
+  canvas.style.width = `${320 * scale}px`;
+  canvas.style.height = `${240 * scale}px`;
+
+  const filesPromise = Promise.all(FILES.map(async (name) => {
+    const r = await fetch(dataUrl + name);
+    if (!r.ok) throw new Error(`${name}: HTTP ${r.status}`);
+    return [name, new Uint8Array(await r.arrayBuffer())];
+  }));
+
+  const { default: createWolf3d } = await import(new URL('wolf3d.js', new URL(build, location.href)).href);
+  const t0 = performance.now();
+
+  function onBlissEvent(type, json) {
+    window.blissEvents.push({ type, data: JSON.parse(json), t: performance.now() });
+    log(`${type} ${json}`);
+    if (type === 'started') {
+      statusEl.textContent = `started in ${Math.round(performance.now() - t0)} ms`;
+      canvas.focus();
+    } else if (type === 'pauseChanged') {
+      document.getElementById('pause').textContent = JSON.parse(json).paused ? 'Продолжить' : 'Пауза';
+    } else if (type === 'quit') {
+      statusEl.textContent = 'quit';
+    }
+  }
+
+  const M = await createWolf3d({
+    canvas,
+    arguments: args,
+    blissDataDir: '/data',
+    locateFile: (name) => new URL(name, new URL(build, location.href)).href,
+    print: (t) => console.log(t),
+    printErr: (t) => console.warn(t),
+    onBlissEvent,
+    preRun: [(M) => {
+      M.addRunDependency('bliss-data');
+      filesPromise.then((files) => {
+        for (const [name, bytes] of files) M.FS.writeFile(`/data/${name}`, bytes);
+        M.removeRunDependency('bliss-data');
+      }, (err) => { statusEl.textContent = 'Ошибка загрузки: ' + err.message; });
+    }],
+  });
+  window.wolf3d = M;
+
+  document.getElementById('pause').onclick = () => {
+    if (M._bliss_is_paused()) M._bliss_resume(); else M._bliss_pause();
+    canvas.focus();
+  };
+  document.getElementById('volume').oninput = (e) => M._bliss_set_master_volume(+e.target.value);
+</script>
+</body>
+</html>

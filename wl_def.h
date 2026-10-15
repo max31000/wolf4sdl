@@ -23,6 +23,9 @@
 #	include <stdarg.h>
 #endif
 #include <SDL.h>
+#ifdef __EMSCRIPTEN__
+#include "web/bliss_web.h"
+#endif
 
 #if !defined O_BINARY
 #	define O_BINARY 0

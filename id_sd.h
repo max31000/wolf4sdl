@@ -129,7 +129,12 @@ extern  digiinfo        *DigiList;
 extern  int             DigiMap[];
 extern  int             DigiChannel[];
 
+#ifdef __EMSCRIPTEN__
+// Time-based busy loops yield to the browser (see web/bliss_web.h).
+#define GetTimeCount()  (BW_YieldIfBusy(), (SDL_GetTicks()*7)/100)
+#else
 #define GetTimeCount()  ((SDL_GetTicks()*7)/100)
+#endif
 
 // Function prototypes
 void            Delay (int32_t wolfticks);
