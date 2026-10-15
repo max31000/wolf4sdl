@@ -1499,18 +1499,23 @@ void GP2X_ButtonUp (int button);
 #ifndef _WIN32
     static inline char *itoa (int value, char *string, int radix)
     {
-        int len = strlen(string) + 1;
+        // The destination is usually uninitialized, so strlen(string) cannot be used as its
+        // size (in WebAssembly the stack starts zeroed and every number came out empty).
+        // Like the DOS original, callers provide a buffer large enough for the number.
+        char buf[24];
 
-	    snprintf (string,len,"%d",value);
+        snprintf (buf,sizeof(buf),"%d",value);
+        strcpy (string,buf);
 
 	    return string;
     }
 
     static inline char *ltoa (long value, char *string, int radix)
     {
-        int len = strlen(string) + 1;
+        char buf[24];
 
-	    snprintf (string,len,"%ld",value);
+        snprintf (buf,sizeof(buf),"%ld",value);
+        strcpy (string,buf);
 
 	    return string;
     }
