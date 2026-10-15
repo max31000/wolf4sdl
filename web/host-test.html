@@ -28,6 +28,7 @@
 <main>
   <div id="bar">
     <button id="pause">Пауза</button>
+    <button id="dispose">Dispose + create</button>
     <label>Громкость <input id="volume" type="range" min="0" max="100" value="100"></label>
     <input id="probe" placeholder="DOM input (typing test)" size="24">
     <span id="status">Загрузка…</span>
@@ -78,29 +79,40 @@
     }
   }
 
-  const M = await createWolf3d({
-    canvas,
-    arguments: args,
-    blissDataDir: '/data',
-    locateFile: (name) => new URL(name, new URL(build, location.href)).href,
-    print: (t) => console.log(t),
-    printErr: (t) => console.warn(t),
-    onBlissEvent,
-    preRun: [(M) => {
-      M.addRunDependency('bliss-data');
-      filesPromise.then((files) => {
-        for (const [name, bytes] of files) M.FS.writeFile(`/data/${name}`, bytes);
-        M.removeRunDependency('bliss-data');
-      }, (err) => { statusEl.textContent = 'Ошибка загрузки: ' + err.message; });
-    }],
-  });
-  window.wolf3d = M;
+  // A new module instance each time (window.createGame() after bliss_dispose() re-creates it).
+  async function createGame() {
+    const M = await createWolf3d({
+      canvas,
+      arguments: [...args],   // a fresh array: the runtime consumes it
+      blissDataDir: '/data',
+      locateFile: (name) => new URL(name, new URL(build, location.href)).href,
+      print: (t) => console.log(t),
+      printErr: (t) => console.warn(t),
+      onBlissEvent,
+      preRun: [(M) => {
+        M.addRunDependency('bliss-data');
+        filesPromise.then((files) => {
+          for (const [name, bytes] of files) M.FS.writeFile(`/data/${name}`, bytes);
+          M.removeRunDependency('bliss-data');
+        }, (err) => { statusEl.textContent = 'Ошибка загрузки: ' + err.message; });
+      }],
+    });
+    window.wolf3d = M;
+    return M;
+  }
+  window.createGame = createGame;
+  await createGame();
 
   document.getElementById('pause').onclick = () => {
+    const M = window.wolf3d;
     if (M._bliss_is_paused()) M._bliss_resume(); else M._bliss_pause();
     canvas.focus();
   };
-  document.getElementById('volume').oninput = (e) => M._bliss_set_master_volume(+e.target.value);
+  document.getElementById('dispose').onclick = async () => {
+    window.wolf3d._bliss_dispose();
+    await createGame();
+  };
+  document.getElementById('volume').oninput = (e) => window.wolf3d._bliss_set_master_volume(+e.target.value);
 </script>
 </body>
 </html>

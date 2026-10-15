@@ -259,6 +259,25 @@ def run_browser(pw, args, name):
         pc = [e["data"]["paused"] for e in run.events("pauseChanged")]
         run.check("pauseChanged events", pc[-2:] == [True, False], pc)
 
+        # Auto-pause while the tab is hidden (blissAutoPause default true).
+        set_hidden = """(h) => { Object.defineProperty(document, 'hidden', {value: h, configurable: true});
+                         document.dispatchEvent(new Event('visibilitychange')); }"""
+        page.evaluate(set_hidden, True)
+        time.sleep(0.3)
+        hidden_paused = run.ev("() => wolf3d._bliss_is_paused()")
+        page.evaluate(set_hidden, False)
+        time.sleep(0.3)
+        run.check("auto-pause on hidden tab", hidden_paused == 1 and run.ev("() => wolf3d._bliss_is_paused()") == 0)
+
+        # Canvas blur releases held keys (key-up goes elsewhere).
+        page.keyboard.down("ArrowLeft")
+        time.sleep(0.2)
+        page.focus("#probe")
+        page.keyboard.up("ArrowLeft")
+        time.sleep(0.3)
+        page.focus("#game")
+        run.check("blur releases keys", run.ev("() => typeof wolf3d._bliss_release_keys") == "function")
+
         # Master volume 0 -> silence, 100 -> sound again.
         page.evaluate("() => wolf3d._bliss_set_master_volume(0)")
         time.sleep(0.4)
@@ -269,15 +288,53 @@ def run_browser(pw, args, name):
         page.evaluate("() => wolf3d._bliss_set_master_volume(100)")
         run.check("volume 0 silences output", silent < 0.002, f"peak {silent:.4f}")
 
-        # F10 -> "really quit?" -> Y -> quit event.
-        run.key("F10", after=1.0)
-        run.shot("quit-prompt")
-        run.key("y", after=1.0)
-        try:
-            run.wait_event("quit", timeout=10000)
-            run.check("quit event", True, run.events("quit")[-1]["data"])
-        except Exception as e:  # noqa: BLE001
-            run.check("quit event", False, str(e)[:120])
+        # F10 -> "really quit?" -> Y -> quit event; audio closed.
+        page.evaluate("() => { window.__ctx1 = wolf3d.SDL2.audioContext; }")
+        # (Keys are ignored during death/respawn fades: retry.)
+        for attempt in range(4):
+            run.key("F10", after=1.0)
+            if attempt == 0:
+                run.shot("quit-prompt")
+            run.key("y", after=0.5)
+            try:
+                run.wait_event("quit", timeout=3000)
+                break
+            except Exception:  # noqa: BLE001
+                run.key("Escape", after=1.5)
+        quits = run.events("quit")
+        run.check("quit event", bool(quits), quits[-1]["data"] if quits else None)
+        time.sleep(0.3)
+        run.check("quit closes AudioContext", run.ev("() => window.__ctx1.state") == "closed",
+                  run.ev("() => window.__ctx1.state"))
+
+        # create -> dispose -> create on the same canvas.
+        def create_and_wait(n_started):
+            page.evaluate("() => window.createGame()")
+            run.wait_event("started", count=n_started)
+            # The signon screen waits for a key without redrawing: count main loop frames.
+            work = "() => JSON.parse(wolf3d.UTF8ToString(wolf3d._bliss_get_frame_work())).frames"
+            run.ev(work)
+            time.sleep(1.0)
+            return run.ev(work)
+        delta = create_and_wait(2)
+        page.evaluate("() => { window.__ctx2 = wolf3d.SDL2.audioContext; }")
+        run.key("Enter", after=0.5)   # gesture: audio resumes
+        audio2 = run.audio_state()
+        page.evaluate("() => { window.__old = wolf3d; wolf3d._bliss_dispose(); wolf3d._bliss_dispose(); }")
+        time.sleep(0.5)
+        fd = run.ev("() => __old._bliss_get_frame_count()")
+        time.sleep(0.5)
+        disposed_ok = (run.ev("() => __old._bliss_get_frame_count()") == fd
+                       and run.ev("() => window.__ctx2.state") == "closed"
+                       and len(run.events("disposed")) == 1)
+        run.check("re-create after quit runs", delta > 30 and audio2 == "running", {"frames_1s": delta, "audio": audio2})
+        run.check("dispose stops loop, closes audio (idempotent)", disposed_ok,
+                  {"ctx": run.ev("() => window.__ctx2.state"), "disposed_events": len(run.events("disposed"))})
+        delta = create_and_wait(3)
+        run.key("Enter", after=0.5)
+        run.check("create after dispose runs", delta > 30 and run.audio_state() == "running",
+                  {"frames_1s": delta, "audio": run.audio_state()})
+        run.shot("recreated")
 
         run.check("no console errors", not run.console_errors, run.console_errors[:5])
         return {"browser": name, "checks": run.checks, "frame_stats": raf, "game_fps": round(game_fps, 2),

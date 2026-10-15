@@ -20,6 +20,8 @@ extern "C" {
 // The game's own main() (wl_main.c), started on the game fiber.
 int wolf_main (int argc, char *argv[]);
 
+// Game clock: SDL_GetTicks() without the time spent in host pause.
+Uint32 BW_GetTicks (void);
 // Gives control back to the browser until the next animation frame.
 void BW_Yield (void);
 // Yields if the game has been running for a long time without yielding (spin-wait guard).
@@ -45,6 +47,7 @@ void BW_ApplyMasterVolume (Uint8 *stream, int len);
 #endif
 
 #ifndef BLISS_WEB_IMPL
+#define SDL_GetTicks()          BW_GetTicks()
 #define SDL_Delay(ms)           BW_Delay(ms)
 #define SDL_RenderPresent(r)    BW_RenderPresent(r)
 #define SDL_WaitEvent(e)        BW_WaitEvent(e)

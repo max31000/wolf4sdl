@@ -22,6 +22,8 @@ jobs:
     container: emscripten/emsdk@sha256:e077d54e2b8970575ebc4f185ac1de0b95c05f2b266134d4ba27449af7aebf65
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Install build tools
         run: |
@@ -46,6 +48,14 @@ jobs:
           mkdir -p "dist/${NAME}"
           cp build-web/bin/wolf3d.js build-web/bin/wolf3d.wasm license-id.txt license-gpl.txt license-mame.txt "dist/${NAME}/"
           cp web/RELEASE-README.md "dist/${NAME}/README.md"
+          {
+            echo
+            echo "## Build"
+            echo
+            echo "- Ref: \`${GITHUB_REF_NAME}\`"
+            echo "- Commit: \`${GITHUB_SHA}\`"
+            echo "- Emscripten 6.0.10 (emscripten/emsdk image pinned by digest)"
+          } >> "dist/${NAME}/README.md"
           # Files at the archive root.
           tar -C "dist/${NAME}" -czf "dist/${NAME}.tgz" .
           (cd dist && sha256sum "${NAME}.tgz" > "${NAME}.tgz.sha256")

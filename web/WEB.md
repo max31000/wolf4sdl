@@ -44,7 +44,11 @@ const wolf = await createWolf3d({
   }],
   onBlissEvent(type, json) { /* see below */ },
   arguments: [],                                   // optional extra Wolf4SDL options, e.g. ['--goobers']
+                                                   // (a fresh array per instance: the runtime consumes it)
+  blissAutoPause: true,                            // default: host pause while the tab is hidden
 });
+// leaving the page / route:
+wolf._bliss_dispose();                             // then drop the reference; create a new one to play again
 ```
 
 - Data files may be written in upper or lower case. When `main()` starts it renames them to lower case,
@@ -72,16 +76,19 @@ const wolf = await createWolf3d({
 | `newGame` | `{"difficulty":0..3,"episode":0..5}` | New Game was chosen |
 | `pauseChanged` | `{"paused":bool}` | `bliss_pause` / `bliss_resume` |
 | `error` | `{"message":"..."}` | fatal error (`Quit("...")`, missing data, ...) |
-| `quit` | `{"status":0\|1}` | the game exited (F10 / menu Quit / error). The main loop is stopped. |
+| `quit` | `{"status":0\|1}` | the game exited (F10 / menu Quit / error). Same teardown as `bliss_dispose`. |
+| `disposed` | `{}` | `bliss_dispose()` finished |
 
 ### Exports (`Module._name` / `ccall`)
 
 | function | |
 |---|---|
-| `bliss_pause()` / `bliss_resume()` | Stops or resumes the main loop and suspends or resumes the AudioContext. This is a host-level freeze, separate from the in-game Pause key. |
+| `bliss_pause()` / `bliss_resume()` | Host-level freeze, separate from the in-game Pause key. Stops or resumes the main loop, pauses the SDL audio device (`Mix_PauseAudio`, so SDL's AudioContext auto-resume cannot unpause the sound) and suspends or resumes the AudioContext. The game clock stands still while paused. Called automatically while the tab is hidden, unless `blissAutoPause: false`. |
 | `bliss_is_paused() -> 0/1` | |
-| `bliss_set_master_volume(0..100) -> int` | Master gain on the whole mix (curve `(v/100)^2`); 100 = unchanged |
+| `bliss_set_master_volume(0..100) -> int` | Master gain on the whole mix, **linear** (`v/100`, same as the other Bliss engines); 100 = unchanged |
 | `bliss_get_master_volume() -> int` | |
+| `bliss_dispose()` | Ends the instance: cancels the main loop, `Mix_CloseAudio()` + `SDL_Quit()` (which closes the AudioContext and SDL's DOM handlers), aborts all pre.js listeners (`AbortController`, `Module.blissAbort`) and exits pointer lock. Idempotent. The module cannot be used afterwards; `createWolf3d` again (the same canvas works). Quitting the game (F10, menu Quit) runs the same teardown. |
+| `bliss_release_keys()` | Clears the keys the game holds as pressed. pre.js calls it on canvas `blur` (key-ups then go elsewhere). |
 | `bliss_get_frame_count() -> uint` | Frames presented by the game (diagnostics) |
 | `bliss_get_frame_work() -> char*` | JSON `{"frames","avgMs","maxMs"}` of game CPU time per animation frame since the last call (read it with `UTF8ToString`) |
 
@@ -108,7 +115,8 @@ unmodified game runs on an **Emscripten fiber (Asyncify)**, and the browser driv
   The game sources change only in a few small `#ifdef __EMSCRIPTEN__` blocks.
 - Timing stays the original 70 Hz tic clock (`SDL_GetTicks`). The game draws at most one frame per
   animation frame: 60 fps on a 60 Hz display, about 70 fps (the original tic rate) on faster displays.
-- No pthreads. `exit()` / `Quit()` stop the main loop and emit `quit`.
+- No pthreads. `exit()` / `Quit()` tear everything down (see `bliss_dispose`), emit `quit` and
+  leave the game fiber for good.
 
 Cost: Asyncify instrumentation makes the wasm about 1.5 MB (550 KB gzip). Game CPU time is about
 1 ms per frame in Chromium on a desktop. `ASYNCIFY_IGNORE_INDIRECT` would save about 300 KB, but it is
@@ -123,7 +131,8 @@ python web/host_test.py --browser all --seconds 60 --shots out/
 
 `web/host-test.html?build=../build-web/bin/&data=/bliss/assets/wolf3d/&scale=3` is the host page.
 `web/host_test.py` (Python Playwright) runs this sequence: start, signon, title, menu, New Game,
-then about 60 s of walking, turning and shooting, then host pause/resume, master volume and F10
-quit. It checks the events, frame pacing, AudioContext state, audio output (analyser tap) and that
+then about 60 s of walking, turning and shooting, then host pause/resume, auto-pause on a hidden
+tab, canvas blur, master volume, F10 quit (AudioContext closed), and create -> dispose -> create on the
+same canvas. It checks the events, frame pacing, AudioContext state, audio output (analyser tap) and that
 the console has no errors. Browsers run headless and muted (Chromium `--mute-audio`, Firefox
 `media.volume_scale=0.0`), with pointer lock stubbed out.

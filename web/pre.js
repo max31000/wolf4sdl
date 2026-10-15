@@ -12,6 +12,10 @@
 //   with CSS (4:3).
 // - Resumes the SDL2 AudioContext on the first user gesture (autoplay policy) unless the host
 //   paused the game.
+// - Auto-pause while the tab is hidden (Module.blissAutoPause, default true); releases held keys
+//   when the canvas loses focus.
+// - All listeners are registered with an AbortController (Module.blissAbort) that
+//   bliss_dispose() / quit abort.
 (function () {
   var dataDir = Module['blissDataDir'] || '/data';
   Module['blissDataDir'] = dataDir;
@@ -33,26 +37,48 @@
     if (type === 'started') Module['blissStarted'] = true;
   };
 
-  function setupCanvas() {
-    var canvas = Module['canvas'];
-    if (!canvas || canvas.__blissSetup) return;
-    canvas.__blissSetup = true;
-    if (!canvas.hasAttribute('tabindex')) canvas.setAttribute('tabindex', '0');
-    canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
-    canvas.addEventListener('pointerdown', function () { canvas.focus({ preventScroll: true }); });
+  // Every listener added here goes away with bliss_dispose() / quit (Module.blissAbort).
+  var abort = new AbortController();
+  var signal = abort.signal;
+  Module['blissAbort'] = abort;
+  function call(name) {
+    var f = Module['_' + name];
+    return f && !signal.aborted ? f() : 0;
   }
-  setupCanvas();
+
+  var canvas = Module['canvas'];
+  if (canvas) {
+    if (!canvas.hasAttribute('tabindex')) canvas.setAttribute('tabindex', '0');
+    canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); }, { signal: signal });
+    canvas.addEventListener('pointerdown', function () { canvas.focus({ preventScroll: true }); }, { signal: signal });
+    // Key-up events of keys held while the canvas loses focus never reach the game.
+    canvas.addEventListener('blur', function () { call('bliss_release_keys'); }, { signal: signal });
+  }
+
+  // Module.blissAutoPause (default true): host pause while the tab is hidden.
+  var autoPaused = false;
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', function () {
+      if (Module['blissAutoPause'] === false || !Module['blissStarted']) return;
+      if (document.hidden) {
+        if (!call('bliss_is_paused')) { call('bliss_pause'); autoPaused = true; }
+      } else if (autoPaused) {
+        autoPaused = false;
+        call('bliss_resume');
+      }
+    }, { signal: signal });
+  }
 
   function resumeAudio() {
     var sdl2 = Module['SDL2'];
     var ctx = sdl2 && sdl2.audioContext;
     if (!ctx || ctx.state === 'running') return;
-    if (Module['_bliss_is_paused'] && Module['_bliss_is_paused']()) return;
+    if (signal.aborted || call('bliss_is_paused')) return;
     ctx.resume();
   }
   if (typeof window !== 'undefined') {
     ['keydown', 'pointerdown', 'touchstart'].forEach(function (type) {
-      window.addEventListener(type, resumeAudio, { capture: true, passive: true });
+      window.addEventListener(type, resumeAudio, { capture: true, passive: true, signal: signal });
     });
   }
 })();

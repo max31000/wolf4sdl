@@ -44,7 +44,7 @@ target_compile_options(wolf3d PRIVATE ${PORT_FLAGS} -O3 -Wno-pointer-sign -Wno-p
     -Wno-dangling-else -Wno-pragma-pack -Wno-format -Wno-unused-value -Wno-incompatible-pointer-types-discards-qualifiers)
 
 set(WEB_DIR ${CMAKE_CURRENT_SOURCE_DIR}/web)
-set(WEB_EXPORTS "_main,_bliss_pause,_bliss_resume,_bliss_is_paused,_bliss_set_master_volume,_bliss_get_master_volume,_bliss_get_frame_count,_bliss_get_frame_work")
+set(WEB_EXPORTS "_main,_bliss_pause,_bliss_resume,_bliss_is_paused,_bliss_set_master_volume,_bliss_get_master_volume,_bliss_get_frame_count,_bliss_get_frame_work,_bliss_dispose,_bliss_release_keys")
 target_link_options(wolf3d PRIVATE
     ${PORT_FLAGS} -O3
     -sENVIRONMENT=web

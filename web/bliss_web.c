@@ -4,6 +4,7 @@
 
 #include <emscripten.h>
 #include <emscripten/fiber.h>
+#include <SDL_mixer.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -23,6 +24,9 @@ static void *gameCStack, *gameAsyncifyStack, *mainAsyncifyStack;
 static int onGameFiber;       // currently executing on the game fiber
 static int gameExited;        // the game called exit()/Quit()
 static int paused;            // host pause
+static int shutDown;          // audio/SDL closed, listeners removed (quit or bliss_dispose)
+static Uint32 pausedAt;       // real SDL_GetTicks() when the host paused
+static Uint32 pausedTotal;    // real time spent in host pause: the game clock skips it
 static int startedEmitted;
 static unsigned frameCount;   // frames presented by the game
 
@@ -63,6 +67,12 @@ static void JsonString (char *out, size_t size, const char *str)
     }
     out[n++] = '"';
     out[n] = 0;
+}
+
+// Game clock (SDL_GetTicks in the game sources): stands still while the host has paused.
+Uint32 BW_GetTicks (void)
+{
+    return SDL_GetTicks () - pausedTotal;
 }
 
 // ---- cooperative scheduling ---------------------------------------------------------------
@@ -127,20 +137,38 @@ void BW_Error (const char *message)
     BW_Emit ("error", json);
 }
 
+// Stops everything for good: main loop, audio device (SDL closes its AudioContext), SDL
+// (window event handlers), pre.js listeners, pointer lock. Idempotent.
+static void ShutDown (void)
+{
+    if (shutDown)
+        return;
+    shutDown = 1;
+    gameExited = 1;
+    emscripten_cancel_main_loop ();
+    Mix_CloseAudio ();
+    SDL_Quit ();
+    EM_ASM({
+        if (Module['blissAbort']) Module['blissAbort'].abort();
+        if (typeof document !== 'undefined' && document.pointerLockElement && document.exitPointerLock)
+            document.exitPointerLock();
+    });
+}
+
 void BW_Exit (int status)
 {
     char json[64];
-    gameExited = 1;
-    emscripten_cancel_main_loop ();
+    ShutDown ();
     snprintf (json, sizeof(json), "{\"status\":%d}", status);
     BW_Emit ("quit", json);
+    // Leave the game fiber for good (main() returned, Quit(), fatal error). If exit() was
+    // somehow called outside the fiber, the main loop is already cancelled.
     if (onGameFiber)
     {
         onGameFiber = 0;
-        emscripten_fiber_swap (&gameFiber, &mainFiber);   // never resumed
+        emscripten_fiber_swap (&gameFiber, &mainFiber);
     }
-    emscripten_force_exit (status);
-    for (;;) ;   // not reached
+    abort ();   // not reached
 }
 
 // ---- audio ---------------------------------------------------------------------------------
@@ -157,8 +185,8 @@ void BW_ApplyMasterVolume (Uint8 *stream, int len)
         memset (stream, 0, len);
         return;
     }
-    // Perceptual curve: 0..100 -> gain (volume/100)^2.
-    int gain = volume * volume * 65536 / 10000;
+    // Linear: 0..100 -> gain volume/100 (same curve as the other Bliss engines).
+    int gain = volume * 65536 / 100;
     for (int i = 0; i < count; i++)
         samples[i] = (Sint16) ((samples[i] * gain) >> 16);
 }
@@ -257,6 +285,9 @@ int main (int argc, char *argv[])
 
 static void SetAudioRunning (int running)
 {
+    // Pausing the SDL device keeps SDL's own AudioContext auto-resume from unpausing the
+    // sound; suspending the context saves the CPU of the script processor.
+    Mix_PauseAudio (!running);
     EM_ASM({
         var sdl2 = Module['SDL2'];
         var ctx = sdl2 && sdl2.audioContext;
@@ -277,6 +308,7 @@ EMSCRIPTEN_KEEPALIVE void bliss_pause (void)
 {
     if (paused || gameExited) return;
     paused = 1;
+    pausedAt = SDL_GetTicks ();
     SetAudioRunning (0);
     EmitPause ();
 }
@@ -285,6 +317,7 @@ EMSCRIPTEN_KEEPALIVE void bliss_resume (void)
 {
     if (!paused || gameExited) return;
     paused = 0;
+    pausedTotal += SDL_GetTicks () - pausedAt;
     SetAudioRunning (1);
     EmitPause ();
 }
@@ -305,6 +338,27 @@ EMSCRIPTEN_KEEPALIVE int bliss_set_master_volume (int volume)
 EMSCRIPTEN_KEEPALIVE int bliss_get_master_volume (void)
 {
     return BW_MasterVolume;
+}
+
+// Releases all keys the game thinks are held (pre.js calls it when the canvas loses focus,
+// as the key-up events then go elsewhere).
+extern void IN_ClearKeysDown (void);
+EMSCRIPTEN_KEEPALIVE void bliss_release_keys (void)
+{
+    if (!shutDown)
+        IN_ClearKeysDown ();
+}
+
+// Ends the module for good: stops the main loop, closes audio (and its AudioContext), quits
+// SDL, removes the pre.js listeners and exits pointer lock. Idempotent; the module cannot be
+// used afterwards (create a new one with createWolf3d).
+EMSCRIPTEN_KEEPALIVE void bliss_dispose (void)
+{
+    if (shutDown)
+        return;
+    paused = 0;
+    ShutDown ();
+    BW_Emit ("disposed", "{}");
 }
 
 // Number of frames the game has presented (diagnostics / tests).
